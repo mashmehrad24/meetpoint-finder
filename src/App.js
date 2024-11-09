@@ -1,23 +1,21 @@
-import logo from './logo.svg';
+// src/App.js
+import React from 'react';
 import './App.css';
+import MapComponent from './components/MapComponent';
 
 function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
+    <div className="min-h-screen bg-gray-900">
+      <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700/50 px-4 py-2">
+        <div className="max-w-7xl mx-auto flex items-baseline justify-between">
+          <h1 className="text-xl font-bold text-white">Konkt</h1>
+          <p className="text-sm text-gray-400">Find your perfect meetup spot</p>
+        </div>
       </header>
+
+      <main className="h-[calc(100vh-45px)]"> {/* Adjusted for smaller header */}
+        <MapComponent />
+      </main>
     </div>
   );
 }
