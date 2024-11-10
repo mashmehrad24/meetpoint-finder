@@ -6,6 +6,7 @@ import { darkMapTheme } from '../constants/MapTheme';
 import useNearbyPlaces from '../hooks/useNearbyPlaces';
 import VenueList from './VenueList';
 import TimeFilters from './TimeFilters';
+import { checkRateLimit } from '../utils/rateLimit';
 
 const libraries = ["places", "geometry"];
 
@@ -21,6 +22,7 @@ const MapComponent = () => {
   const [error, setError] = useState('');
   const [suggestions1, setSuggestions1] = useState([]);
   const [suggestions2, setSuggestions2] = useState([]);
+  const [isRateLimited, setIsRateLimited] = useState(false);
   const autocompleteService = useRef(null);
 
   const handleTimeFilterChange = (filterUpdate) => {
@@ -60,6 +62,12 @@ const MapComponent = () => {
   const getSuggestions = async (input, setSuggestions) => {
     if (!input || !autocompleteService.current) return;
 
+    if (!checkRateLimit()) {
+      setIsRateLimited(true);
+      setError('Rate limit exceeded. Please try again in an hour.');
+      return;
+    }
+
     try {
       const request = { input };
       const response = await new Promise((resolve, reject) => {
@@ -97,6 +105,13 @@ const MapComponent = () => {
   const handleAddressSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (!checkRateLimit()) {
+      setIsRateLimited(true);
+      setError('Rate limit exceeded. Please try again in an hour.');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -138,6 +153,7 @@ const MapComponent = () => {
     setMapCenter({ lat: 43.6532, lng: -79.3832 });
     setMapZoom(11);
     setTimeFilter({ openNow: false, specificTime: null });
+    setIsRateLimited(false);
   };
 
   const onLoadScript = () => {
@@ -148,9 +164,22 @@ const MapComponent = () => {
     setError('Failed to load Google Maps. Please try refreshing the page.');
   };
 
+  if (isRateLimited) {
+    return (
+      <div className="flex items-center justify-center h-full bg-gray-900 p-4">
+        <div className="bg-gray-800 p-6 rounded-lg shadow-lg max-w-md">
+          <h2 className="text-xl text-white font-bold mb-4">Rate Limit Exceeded</h2>
+          <p className="text-gray-300">
+            You've reached the maximum number of requests for this hour. 
+            Please try again later.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-[calc(100vh-45px)] flex">
-      {/* Left Column - Flexible width for better content display */}
       <div className="flex-1 min-w-[500px] flex flex-col bg-gray-900 border-r border-gray-700">
         <div className="p-3 space-y-2 overflow-y-auto">
           <LocationSearch
@@ -190,7 +219,6 @@ const MapComponent = () => {
         </div>
       </div>
 
-      {/* Map Section - Fixed 50% width */}
       <div className="w-1/2 bg-gray-800">
         <LoadScript 
           googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY}

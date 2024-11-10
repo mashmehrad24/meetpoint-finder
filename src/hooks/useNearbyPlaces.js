@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { checkRateLimit } from '../utils/rateLimit';
 
 const PLACE_TYPES = ['restaurant', 'bar', 'cafe'];
 const SEARCH_RADIUS = 1000; // 1km radius
@@ -33,6 +34,11 @@ const useNearbyPlaces = (map, midpoint, timeFilter) => {
   const fetchNearbyPlaces = useCallback(async () => {
     if (!map || !midpoint) return;
 
+    if (!checkRateLimit()) {
+      setError('Rate limit exceeded. Please try again in an hour.');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -41,6 +47,11 @@ const useNearbyPlaces = (map, midpoint, timeFilter) => {
       
       const searchPromises = PLACE_TYPES.map(type => 
         new Promise((resolve, reject) => {
+          if (!checkRateLimit()) {
+            reject(new Error('Rate limit exceeded'));
+            return;
+          }
+
           const request = {
             location: new window.google.maps.LatLng(midpoint.lat, midpoint.lng),
             radius: SEARCH_RADIUS,
@@ -66,6 +77,11 @@ const useNearbyPlaces = (map, midpoint, timeFilter) => {
       const detailedPlaces = await Promise.all(
         uniquePlaces.map(place => 
           new Promise((resolve) => {
+            if (!checkRateLimit()) {
+              resolve(null);
+              return;
+            }
+
             service.getDetails({
               placeId: place.place_id,
               fields: [
