@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { MapPin } from 'lucide-react';
+import VenueFilters from './VenueFilters';
 
 const PriceLevel = ({ level }) => {
   return (
@@ -13,7 +14,7 @@ const PriceLevel = ({ level }) => {
 const StarRating = ({ rating, reviewCount }) => {
   const fullStars = Math.floor(rating);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 text-xs">
       <span className="font-medium text-gray-50">{rating}</span>
       <div className="flex text-yellow-400">
         {[...Array(5)].map((_, i) => (
@@ -23,26 +24,6 @@ const StarRating = ({ rating, reviewCount }) => {
         ))}
       </div>
       <span className="text-gray-400">({reviewCount})</span>
-    </div>
-  );
-};
-
-const ServiceInfo = ({ place }) => {
-  const services = [];
-  if (place.dine_in) services.push("Dine-in");
-  if (place.takeout === false) services.push("No takeout");
-  else if (place.takeout) services.push("Takeout");
-  if (place.delivery === false) services.push("No delivery");
-  else if (place.delivery) services.push("Delivery");
-  
-  return (
-    <div className="flex flex-wrap gap-2 text-gray-400 text-sm mt-2">
-      {services.map((service, index) => (
-        <span key={service}>
-          {index > 0 && <span className="mr-2">•</span>}
-          {service}
-        </span>
-      ))}
     </div>
   );
 };
@@ -67,29 +48,6 @@ const OpeningHours = ({ place }) => {
     });
   };
 
-  const getNextPeriod = () => {
-    const periods = place.opening_hours?.periods;
-    if (!periods?.length) return null;
-
-    const sortedPeriods = [...periods].sort((a, b) => {
-      if (a.open.day !== b.open.day) return a.open.day - b.open.day;
-      return parseInt(a.open.time) - parseInt(b.open.time);
-    });
-
-    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-      const checkDay = (currentDay + dayOffset) % 7;
-      const nextPeriod = sortedPeriods.find(period => {
-        if (period.open.day !== checkDay) return false;
-        if (dayOffset === 0) {
-          return parseInt(period.open.time) > currentTime;
-        }
-        return true;
-      });
-      if (nextPeriod) return { ...nextPeriod, dayOffset };
-    }
-    return null;
-  };
-
   const formatTime = (time) => {
     if (!time) return '';
     const hours = parseInt(time.slice(0, 2));
@@ -100,13 +58,10 @@ const OpeningHours = ({ place }) => {
   };
 
   const currentPeriod = getCurrentPeriod();
-  const nextPeriod = !currentPeriod ? getNextPeriod() : null;
   const isOpen = currentPeriod !== null;
 
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1 text-xs">
       <span className={`font-medium ${isOpen ? 'text-green-500' : 'text-red-500'}`}>
         {isOpen ? 'Open' : 'Closed'}
       </span>
@@ -114,17 +69,7 @@ const OpeningHours = ({ place }) => {
         <>
           <span className="text-gray-400">•</span>
           <span className="text-gray-400">
-            Closes {formatTime(currentPeriod.close.time)}
-          </span>
-        </>
-      )}
-      {!isOpen && nextPeriod && (
-        <>
-          <span className="text-gray-400">•</span>
-          <span className="text-gray-400">
-            Opens {nextPeriod.dayOffset === 0 ? 
-              formatTime(nextPeriod.open.time) : 
-              `${days[nextPeriod.open.day]} ${formatTime(nextPeriod.open.time)}`}
+            until {formatTime(currentPeriod.close.time)}
           </span>
         </>
       )}
@@ -133,18 +78,40 @@ const OpeningHours = ({ place }) => {
 };
 
 const VenueList = ({ places, isLoading, error, timeFilter }) => {
+  const [filters, setFilters] = useState({
+    restaurant: false,
+    bar: false,
+    cafe: false,
+    night_club: false,
+    park: false
+  });
+
+  const handleFilterChange = (filterId, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [filterId]: value
+    }));
+  };
+
+  const filteredPlaces = places.filter(place => {
+    const activeFilters = Object.entries(filters).filter(([_, value]) => value);
+    if (activeFilters.length === 0) return true;
+    return activeFilters.some(([filterType]) => 
+      place.types?.includes(filterType)
+    );
+  });
+
   if (isLoading) {
     return (
       <div className="h-full overflow-hidden flex flex-col">
-        <div className="p-4 bg-gray-800 border-b border-gray-700">
-          <div className="animate-pulse">
-            <div className="h-4 bg-gray-700 rounded w-1/3"></div>
-          </div>
-        </div>
-        <div className="p-4 overflow-auto flex-1">
-          <div className="animate-pulse space-y-4">
+        <VenueFilters 
+          filters={filters}
+          onFilterChange={handleFilterChange}
+        />
+        <div className="p-2">
+          <div className="animate-pulse space-y-3">
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-24 bg-gray-700 rounded"></div>
+              <div key={i} className="h-16 bg-gray-700 rounded"></div>
             ))}
           </div>
         </div>
@@ -155,74 +122,64 @@ const VenueList = ({ places, isLoading, error, timeFilter }) => {
   if (error) {
     return (
       <div className="h-full overflow-hidden flex flex-col">
-        <div className="p-4 text-red-400">Error loading venues: {error}</div>
+        <VenueFilters 
+          filters={filters}
+          onFilterChange={handleFilterChange}
+        />
+        <div className="p-2 text-red-400 text-sm">Error loading venues: {error}</div>
       </div>
     );
   }
 
   return (
     <div className="h-full overflow-hidden flex flex-col">
-      <div className="p-4 bg-gray-800 border-b border-gray-700">
-        <h2 className="text-xl font-semibold text-gray-50">Nearby Venues</h2>
-        <p className="text-sm text-gray-300">
-          {places.length} places found • {timeFilter?.openNow ? 'Open now' : 'All times'}
+      <VenueFilters 
+        filters={filters}
+        onFilterChange={handleFilterChange}
+      />
+      <div className="px-2 py-1 border-b border-gray-700">
+        <p className="text-xs text-gray-400">
+          {filteredPlaces.length} places found • {timeFilter?.openNow ? 'Open now' : 'All times'}
         </p>
       </div>
       
-      <div className="overflow-auto flex-1">
+      <div className="overflow-auto">
         <div className="divide-y divide-gray-700">
-          {places.map((place) => (
-            <div key={place.place_id} className="p-4 hover:bg-gray-700/30 transition-colors">
-              <div className="flex justify-between items-start gap-4">
-                <div className="flex-1 min-w-0">
+          {filteredPlaces.map((place) => (
+            <div key={place.place_id} className="p-2 hover:bg-gray-700/30 transition-colors">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0 space-y-0.5">
                   <div className="flex items-start justify-between">
-                    <h3 className="text-gray-50 font-semibold flex items-center gap-2 text-lg">
+                    <h3 className="text-gray-50 font-medium text-sm truncate pr-2">
                       {place.name}
                     </h3>
                     <a
                       href={`https://www.google.com/maps/place/?q=place_id:${place.place_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-purple-400 hover:text-purple-300 transition-colors p-1"
-                      aria-label={`Open ${place.name} in Google Maps`}
+                      className="text-purple-400 hover:text-purple-300 transition-colors"
                     >
-                      <MapPin className="w-5 h-5" />
+                      <MapPin className="w-3.5 h-3.5" />
                     </a>
                   </div>
                   
-                  <div className="mt-1 flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <StarRating rating={place.rating} reviewCount={place.user_ratings_total} />
                     {place.price_level && (
                       <>
-                        <span className="text-gray-400">•</span>
+                        <span className="text-gray-400 text-xs">•</span>
                         <PriceLevel level={place.price_level} />
                       </>
                     )}
                   </div>
                   
-                  <div className="mt-1 flex items-center gap-2 text-gray-400">
-                    <span>{place.types?.[0]?.replace(/_/g, ' ')}</span>
-                    {place.formatted_address && (
-                      <>
-                        <span>•</span>
-                        <span>{place.formatted_address}</span>
-                      </>
-                    )}
+                  <div className="text-gray-400 text-xs truncate">
+                    {place.formatted_address}
                   </div>
-
-                  {place.editorial_summary?.overview && (
-                    <p className="mt-2 text-gray-300 text-sm">
-                      {place.editorial_summary.overview}
-                    </p>
-                  )}
                   
                   {place.opening_hours && (
-                    <div className="mt-2">
-                      <OpeningHours place={place} />
-                    </div>
+                    <OpeningHours place={place} />
                   )}
-                  
-                  <ServiceInfo place={place} />
                 </div>
               </div>
             </div>
