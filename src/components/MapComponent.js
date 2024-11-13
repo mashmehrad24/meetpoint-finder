@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
 import { LocationSearch } from './LocationSearch';
 import useMapLogic from '../hooks/useMapLogic';
@@ -6,9 +6,12 @@ import { darkMapTheme } from '../constants/MapTheme';
 import useNearbyPlaces from '../hooks/useNearbyPlaces';
 import VenueList from './VenueList';
 import TimeFilters from './TimeFilters';
+import LocationBiasControls from './LocationBiasControls';
 import { checkRateLimit } from '../utils/rateLimit';
+import TransportModeSelector from './TransportModeSelector';
 
 const libraries = ["places", "geometry"];
+const GEOCODING_TIMEOUT = 10000; // 10 seconds
 
 const MapComponent = () => {
   const [timeFilter, setTimeFilter] = useState({
@@ -23,7 +26,11 @@ const MapComponent = () => {
   const [suggestions1, setSuggestions1] = useState([]);
   const [suggestions2, setSuggestions2] = useState([]);
   const [isRateLimited, setIsRateLimited] = useState(false);
+  const [locationBias, setLocationBias] = useState('middle');
+  const [transportMode1, setTransportMode1] = useState('DRIVING');
+  const [transportMode2, setTransportMode2] = useState('DRIVING');
   const autocompleteService = useRef(null);
+  const loadingTimeoutRef = useRef(null);
 
   const handleTimeFilterChange = (filterUpdate) => {
     if (filterUpdate.type === 'openNow') {
@@ -57,14 +64,18 @@ const MapComponent = () => {
     places,
     isLoading: isLoadingPlaces,
     error: placesError,
-  } = useNearbyPlaces(mapRef.current, midpoint, timeFilter);
+    remainingSearches
+  } = useNearbyPlaces(mapRef.current, points, locationBias, timeFilter, {
+    transportMode1,
+    transportMode2
+  });
 
   const getSuggestions = async (input, setSuggestions) => {
     if (!input || !autocompleteService.current) return;
 
     if (!checkRateLimit()) {
       setIsRateLimited(true);
-      setError('Rate limit exceeded. Please try again in an hour.');
+      setError('You\'ve used all free searches for today. Try again tomorrow!');
       return;
     }
 
@@ -91,7 +102,12 @@ const MapComponent = () => {
     const geocoder = new window.google.maps.Geocoder();
     
     return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error('Geocoding timed out'));
+      }, GEOCODING_TIMEOUT);
+
       geocoder.geocode({ address }, (results, status) => {
+        clearTimeout(timeoutId);
         if (status === 'OK') {
           const { lat, lng } = results[0].geometry.location;
           resolve({ lat: lat(), lng: lng() });
@@ -108,11 +124,22 @@ const MapComponent = () => {
 
     if (!checkRateLimit()) {
       setIsRateLimited(true);
-      setError('Rate limit exceeded. Please try again in an hour.');
+      setError('You\'ve used all free searches for today. Try again tomorrow!');
       return;
     }
 
     setIsLoading(true);
+    
+    // Clear any existing loading timeout
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+    }
+
+    // Set a new loading timeout
+    loadingTimeoutRef.current = setTimeout(() => {
+      setIsLoading(false);
+      setError('Search took too long. Please try again.');
+    }, GEOCODING_TIMEOUT);
 
     try {
       const point1 = await geocodeAddress(address1);
@@ -139,6 +166,11 @@ const MapComponent = () => {
       setError(err.toString());
     } finally {
       setIsLoading(false);
+      // Clear the loading timeout
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
     }
   };
 
@@ -154,6 +186,14 @@ const MapComponent = () => {
     setMapZoom(11);
     setTimeFilter({ openNow: false, specificTime: null });
     setIsRateLimited(false);
+    setLocationBias('middle');
+    setTransportMode1('DRIVING');
+    setTransportMode2('DRIVING');
+    setIsLoading(false);
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
   };
 
   const onLoadScript = () => {
@@ -164,14 +204,22 @@ const MapComponent = () => {
     setError('Failed to load Google Maps. Please try refreshing the page.');
   };
 
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+    };
+  }, []);
+
   if (isRateLimited) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-900 p-4">
         <div className="bg-gray-800 p-6 rounded-lg shadow-lg max-w-md">
-          <h2 className="text-xl text-white font-bold mb-4">Rate Limit Exceeded</h2>
+          <h2 className="text-xl text-white font-bold mb-4">Free Limit Reached</h2>
           <p className="text-gray-300">
-            You've reached the maximum number of requests for this hour. 
-            Please try again later.
+            You've used all free searches for today. Please try again tomorrow!
           </p>
         </div>
       </div>
@@ -196,7 +244,18 @@ const MapComponent = () => {
             isLoading={isLoading}
             error={error}
             getSuggestions={getSuggestions}
+            transportMode1={transportMode1}
+            transportMode2={transportMode2}
+            onTransportMode1Change={setTransportMode1}
+            onTransportMode2Change={setTransportMode2}
           />
+
+          {points.length === 2 && (
+            <LocationBiasControls 
+              bias={locationBias}
+              onBiasChange={setLocationBias}
+            />
+          )}
 
           {midpoint && (
             <div className="space-y-2">
@@ -210,6 +269,7 @@ const MapComponent = () => {
                   places={places}
                   isLoading={isLoadingPlaces}
                   error={placesError}
+                  remainingSearches={remainingSearches}
                   timeFilter={timeFilter}
                   compact={true}
                 />

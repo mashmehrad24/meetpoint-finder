@@ -77,7 +77,7 @@ const OpeningHours = ({ place }) => {
   );
 };
 
-const VenueList = ({ places, isLoading, error, timeFilter }) => {
+const VenueList = ({ places, isLoading, error, remainingSearches, timeFilter }) => {
   const [filters, setFilters] = useState({
     restaurant: false,
     bar: false,
@@ -126,7 +126,11 @@ const VenueList = ({ places, isLoading, error, timeFilter }) => {
           filters={filters}
           onFilterChange={handleFilterChange}
         />
-        <div className="p-2 text-red-400 text-sm">Error loading venues: {error}</div>
+        <div className="p-2">
+          <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-3">
+            <p className="text-red-200 text-sm">{error}</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -138,9 +142,16 @@ const VenueList = ({ places, isLoading, error, timeFilter }) => {
         onFilterChange={handleFilterChange}
       />
       <div className="px-2 py-1 border-b border-gray-700">
-        <p className="text-xs text-gray-400">
-          {filteredPlaces.length} places found • {timeFilter?.openNow ? 'Open now' : 'All times'}
-        </p>
+        <div className="flex justify-between items-center">
+          <p className="text-xs text-gray-400">
+            {filteredPlaces.length} places found • {timeFilter?.openNow ? 'Open now' : 'All times'}
+          </p>
+          {remainingSearches < 20 && (
+            <span className="text-xs text-purple-400">
+              {remainingSearches} free searches left
+            </span>
+          )}
+        </div>
       </div>
       
       <div className="overflow-auto">

@@ -1,6 +1,6 @@
-// components/LocationSearch.js
 import React from 'react';
 import { Combobox } from '@headlessui/react';
+import TransportModeSelector from './TransportModeSelector';
 
 export const LocationSearch = ({
   address1,
@@ -15,13 +15,17 @@ export const LocationSearch = ({
   handleReset,
   isLoading,
   error,
-  getSuggestions
+  getSuggestions,
+  transportMode1,
+  transportMode2,
+  onTransportMode1Change,
+  onTransportMode2Change
 }) => {
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
       <form onSubmit={handleAddressSubmit} className="space-y-4">
         {/* Your Location Input */}
-        <div>
+        <div className="space-y-2">
           <label htmlFor="your-location" className="block text-sm font-medium text-gray-300 mb-1">
             📍 Where are you?
           </label>
@@ -53,10 +57,15 @@ export const LocationSearch = ({
               </Combobox.Options>
             </div>
           </Combobox>
+          <TransportModeSelector
+            person="You"
+            mode={transportMode1}
+            onChange={onTransportMode1Change}
+          />
         </div>
 
         {/* Their Location Input */}
-        <div>
+        <div className="space-y-2">
           <label htmlFor="their-location" className="block text-sm font-medium text-gray-300 mb-1">
             📍 Where are they?
           </label>
@@ -88,6 +97,11 @@ export const LocationSearch = ({
               </Combobox.Options>
             </div>
           </Combobox>
+          <TransportModeSelector
+            person="They"
+            mode={transportMode2}
+            onChange={onTransportMode2Change}
+          />
         </div>
 
         <div className="flex gap-2 pt-2">
