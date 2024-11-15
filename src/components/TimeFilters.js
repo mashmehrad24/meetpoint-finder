@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { Clock, Calendar } from 'lucide-react';
 
 const TimeFilters = ({ onFilterChange }) => {
   const [filterMode, setFilterMode] = useState('none');
@@ -16,12 +17,12 @@ const TimeFilters = ({ onFilterChange }) => {
     return `${hours.toString().padStart(2, '0')}:${minutes}`;
   });
 
-  const resetSpecificTime = () => {
+  const resetSpecificTime = useCallback(() => {
     setSelectedDay('');
     setSelectedTime('');
-  };
+  }, []);
 
-  const handleModeChange = (mode) => {
+  const handleModeChange = useCallback((mode) => {
     if (mode === filterMode) {
       setFilterMode('none');
       onFilterChange({ type: 'openNow', value: false });
@@ -35,9 +36,9 @@ const TimeFilters = ({ onFilterChange }) => {
         onFilterChange({ type: 'openNow', value: false });
       }
     }
-  };
+  }, [filterMode, onFilterChange, resetSpecificTime]);
 
-  const handleTimeChange = (e) => {
+  const handleTimeChange = useCallback((e) => {
     const newTime = e.target.value;
     setSelectedTime(newTime);
     
@@ -50,9 +51,9 @@ const TimeFilters = ({ onFilterChange }) => {
         }
       });
     }
-  };
+  }, [filterMode, selectedDay, onFilterChange]);
 
-  const handleDayChange = (e) => {
+  const handleDayChange = useCallback((e) => {
     const newDay = e.target.value;
     setSelectedDay(newDay);
     
@@ -65,47 +66,49 @@ const TimeFilters = ({ onFilterChange }) => {
         }
       });
     }
-  };
+  }, [filterMode, selectedTime, onFilterChange]);
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 p-2">
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-2 space-y-2">
       <div className="flex gap-2">
         <button
           type="button"
           onClick={() => handleModeChange('now')}
-          className={`flex-1 px-3 py-1 rounded-lg border text-xs transition-colors ${
+          className={`flex items-center justify-center gap-1.5 flex-1 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
             filterMode === 'now'
               ? 'bg-purple-500/20 text-purple-400 border-purple-500/50'
               : 'border-gray-600 text-gray-400 hover:bg-gray-700'
           }`}
         >
+          <Clock className="w-4 h-4" />
           Open Now
         </button>
 
         <button
           type="button"
           onClick={() => handleModeChange('specific')}
-          className={`flex-1 px-3 py-1 rounded-lg border text-xs transition-colors ${
+          className={`flex items-center justify-center gap-1.5 flex-1 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
             filterMode === 'specific'
               ? 'bg-purple-500/20 text-purple-400 border-purple-500/50'
               : 'border-gray-600 text-gray-400 hover:bg-gray-700'
           }`}
         >
+          <Calendar className="w-4 h-4" />
           Set Time
         </button>
       </div>
 
       {filterMode === 'specific' && (
-        <div className="flex gap-2 mt-2">
+        <div className="grid grid-cols-2 gap-2">
           <select
             value={selectedDay}
             onChange={handleDayChange}
-            className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200"
+            className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-200 appearance-none hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500"
           >
-            <option value="">Day</option>
+            <option value="">Select day</option>
             {days.map((day) => (
               <option key={day} value={day.toLowerCase()}>
-                {day.slice(0, 3)}
+                {day}
               </option>
             ))}
           </select>
@@ -113,16 +116,31 @@ const TimeFilters = ({ onFilterChange }) => {
           <select
             value={selectedTime}
             onChange={handleTimeChange}
-            className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200"
+            className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-200 appearance-none hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500"
+            disabled={!selectedDay}
           >
-            <option value="">Time</option>
-            {timeOptions.map((time) => (
-              <option key={time} value={time}>
-                {time}
-              </option>
-            ))}
+            <option value="">Select time</option>
+            {timeOptions.map((time) => {
+              const [hours, minutes] = time.split(':');
+              const hour = parseInt(hours);
+              const ampm = hour >= 12 ? 'PM' : 'AM';
+              const hour12 = hour % 12 || 12;
+              const displayTime = `${hour12}:${minutes} ${ampm}`;
+              
+              return (
+                <option key={time} value={time}>
+                  {displayTime}
+                </option>
+              );
+            })}
           </select>
         </div>
+      )}
+
+      {filterMode === 'specific' && (!selectedDay || !selectedTime) && (
+        <p className="text-xs text-gray-400 px-1">
+          Select both day and time to filter venues
+        </p>
       )}
     </div>
   );

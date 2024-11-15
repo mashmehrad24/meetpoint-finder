@@ -1,23 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
-import { checkRateLimit, getRemainingCalls } from '../utils/rateLimit';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { checkRateLimit, getRemainingCalls, trackEndpointCall } from '../utils/rateLimit';
+import { APIError, ERROR_CODES } from '../utils/errorHandling';
+import Cache from '../utils/cache';
 
-const PLACE_TYPES = ['restaurant', 'bar', 'cafe'];
+const PLACE_TYPES = ['restaurant', 'bar', 'cafe', 'night_club', 'park'];
 const SEARCH_RADIUS = 1000; // 1km radius
-const API_TIMEOUT = 10000; // 10 seconds timeout
+const API_TIMEOUT = 10000; // 10 seconds
+const INITIAL_RESULTS = 5;
+const MAX_TOTAL_RESULTS = 60;
+const REQUEST_DELAY = 250; // Delay between requests
 
-const calculateDistance = (point1, point2) => {
-  if (window.google?.maps?.geometry?.spherical) {
-    return window.google.maps.geometry.spherical.computeDistanceBetween(
-      new window.google.maps.LatLng(point1.lat, point1.lng),
-      point2
-    );
-  }
-  
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const calculateStraightLineDistance = (point1, point2) => {
   const R = 6371e3;
   const φ1 = point1.lat * Math.PI/180;
-  const φ2 = point2.lat() * Math.PI/180;
-  const Δφ = (point2.lat() - point1.lat) * Math.PI/180;
-  const Δλ = (point2.lng() - point1.lng) * Math.PI/180;
+  const φ2 = point2.lat * Math.PI/180;
+  const Δφ = (point2.lat - point1.lat) * Math.PI/180;
+  const Δλ = (point2.lng - point1.lng) * Math.PI/180;
 
   const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
           Math.cos(φ1) * Math.cos(φ2) *
@@ -27,187 +27,281 @@ const calculateDistance = (point1, point2) => {
   return R * c;
 };
 
-const promiseWithTimeout = (promise, timeoutMs) => {
-  let timeoutHandle;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error('Operation timed out'));
-    }, timeoutMs);
-  });
-
-  return Promise.race([
-    promise,
-    timeoutPromise
-  ]).then(result => {
-    clearTimeout(timeoutHandle);
-    return result;
-  }).catch(error => {
-    clearTimeout(timeoutHandle);
-    throw error;
-  });
-};
-
-const useNearbyPlaces = (map, points, bias = 'middle', timeFilter) => {
+const useNearbyPlaces = ({ isMapMode = false, map = null }) => {
   const [venues, setVenues] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [remainingSearches, setRemainingSearches] = useState(getRemainingCalls());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
+  const [activeFilters, setActiveFilters] = useState([]);
+  const detailedPlacesCache = useRef(new Map());
+  const searchAbortController = useRef(null);
+  const placesService = useRef(null);
 
-  const batchNearbySearch = useCallback(async (service, location, radius, types, openNow) => {
+  useEffect(() => {
+    if (isMapMode && map && window.google) {
+      placesService.current = new window.google.maps.places.PlacesService(map);
+    } else {
+      placesService.current = null;
+    }
+  }, [isMapMode, map]);
+
+  const abortPreviousSearch = () => {
+    if (searchAbortController.current) {
+      searchAbortController.current.abort();
+    }
+    searchAbortController.current = new AbortController();
+  };
+
+  const searchPlaces = useCallback(async (location, searchParams) => {
     if (!checkRateLimit()) {
-      throw new Error('FREE_LIMIT');
+      throw new APIError('Rate limit exceeded', ERROR_CODES.RATE_LIMIT);
     }
 
-    const request = {
-      location: new window.google.maps.LatLng(location.lat, location.lng),
-      radius: radius,
-      type: types,
-      openNow: openNow || false
-    };
-
-    return promiseWithTimeout(
-      new Promise((resolve, reject) => {
-        service.nearbySearch(request, (results, status) => {
-          if (status === window.google.maps.places.PlacesServiceStatus.OK) {
-            resolve(results);
-          } else if (status === window.google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
-            resolve([]);
-          } else {
-            reject(new Error(status));
-          }
-        });
-      }),
-      API_TIMEOUT
-    );
-  }, []);
-
-  const batchPlaceDetails = useCallback(async (service, places) => {
-    if (!checkRateLimit()) {
-      throw new Error('FREE_LIMIT');
+    const cacheKey = `${JSON.stringify(location)}_${JSON.stringify(searchParams)}`;
+    const cachedResults = Cache.getPlaces(cacheKey, location);
+    if (cachedResults) {
+      return cachedResults;
     }
 
-    const detailsPromises = places.map(place => 
-      promiseWithTimeout(
-        new Promise((resolve) => {
-          service.getDetails({
-            placeId: place.place_id,
+    trackEndpointCall('nearby_search');
+    let results = [];
+
+    if (isMapMode && placesService.current) {
+      for (const type of PLACE_TYPES) {
+        try {
+          await delay(REQUEST_DELAY); // Add delay between requests
+          const typeResults = await new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+              reject(new APIError('Request timeout', ERROR_CODES.TIMEOUT));
+            }, API_TIMEOUT);
+
+            placesService.current.nearbySearch({
+              location: new window.google.maps.LatLng(location.lat, location.lng),
+              radius: SEARCH_RADIUS,
+              type: type,
+              ...searchParams,
+            }, (results, status) => {
+              clearTimeout(timeoutId);
+              if (status === window.google.maps.places.PlacesServiceStatus.OK) {
+                resolve(results);
+              } else if (status === window.google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
+                resolve([]);
+              } else {
+                reject(new APIError(`Places API error: ${status}`, ERROR_CODES.PLACES));
+              }
+            });
+          });
+          
+          results = [...results, ...typeResults];
+        } catch (error) {
+          console.error(`Error searching for ${type}:`, error);
+        }
+      }
+
+      const uniqueResults = results.reduce((unique, place) => {
+        if (!unique.find(p => p.place_id === place.place_id)) {
+          unique.push(place);
+        }
+        return unique;
+      }, []);
+
+      const limitedResults = uniqueResults.slice(0, MAX_TOTAL_RESULTS);
+      Cache.setPlaces(cacheKey, location, limitedResults);
+      return limitedResults;
+    } else {
+      const response = await fetch(`/api/places/nearby`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          location,
+          radius: SEARCH_RADIUS,
+          types: PLACE_TYPES,
+          ...searchParams
+        })
+      });
+
+      if (!response.ok) {
+        throw new APIError('Failed to fetch places', ERROR_CODES.PLACES);
+      }
+
+      const data = await response.json();
+      Cache.setPlaces(cacheKey, location, data.results);
+      return data.results;
+    }
+  }, [isMapMode]);
+
+  const getPlaceDetails = useCallback(async (placeId) => {
+    if (detailedPlacesCache.current.has(placeId)) {
+      return detailedPlacesCache.current.get(placeId);
+    }
+
+    if (!checkRateLimit()) {
+      throw new APIError('Rate limit exceeded', ERROR_CODES.RATE_LIMIT);
+    }
+
+    await delay(REQUEST_DELAY); // Add delay between requests
+    trackEndpointCall('place_details');
+
+    if (isMapMode && placesService.current) {
+      try {
+        const details = await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            reject(new APIError('Request timeout', ERROR_CODES.TIMEOUT));
+          }, API_TIMEOUT);
+
+          placesService.current.getDetails({
+            placeId: placeId,
             fields: [
               'name',
-              'rating',
               'formatted_address',
-              'opening_hours',
-              'price_level',
-              'website',
               'geometry',
-              'types',
+              'rating',
               'user_ratings_total',
-              'place_id',
-              'editorial_summary'
+              'opening_hours',
+              'website',
+              'price_level',
+              'photos',
+              'types',
+              'international_phone_number'
             ]
-          }, (details, status) => {
+          }, (result, status) => {
+            clearTimeout(timeoutId);
             if (status === window.google.maps.places.PlacesServiceStatus.OK) {
-              resolve(details);
+              resolve(result);
             } else {
-              resolve(null);
+              reject(new APIError(`Place details error: ${status}`, ERROR_CODES.PLACES));
             }
           });
-        }),
-        API_TIMEOUT
-      )
-    );
+        });
 
-    return Promise.all(detailsPromises);
-  }, []);
+        detailedPlacesCache.current.set(placeId, details);
+        return details;
+      } catch (error) {
+        throw error;
+      }
+    } else {
+      const response = await fetch(`/api/places/details/${placeId}`);
+      if (!response.ok) {
+        throw new APIError('Failed to fetch place details', ERROR_CODES.PLACES);
+      }
 
-  const fetchNearbyPlaces = useCallback(async () => {
-    if (!map || points.length !== 2) return;
+      const details = await response.json();
+      detailedPlacesCache.current.set(placeId, details);
+      return details;
+    }
+  }, [isMapMode]);
 
+  const fetchPlaces = useCallback(async (points, params = {}) => {
+    abortPreviousSearch();
     setIsLoading(true);
     setError(null);
 
     try {
-      const service = new window.google.maps.places.PlacesService(map);
-      
-      const results = await batchNearbySearch(
-        service,
-        points[0],
-        SEARCH_RADIUS,
-        PLACE_TYPES,
-        timeFilter?.openNow
-      );
-
-      const uniquePlaces = Array.from(
-        new Map(results.map(place => [place.place_id, place])).values()
-      );
-
-      const detailedPlaces = await batchPlaceDetails(service, uniquePlaces);
-      
-      let filteredPlaces = detailedPlaces
-        .filter(place => place !== null)
-        .map(details => {
-          const distance = calculateDistance(points[0], details.geometry.location);
-          return {
-            ...details,
-            distance,
-            primaryType: PLACE_TYPES.find(type => details.types?.includes(type)) || details.types?.[0],
-            dine_in: details.types?.includes('restaurant'),
-            takeout: details.types?.includes('meal_takeaway'),
-            delivery: details.types?.includes('meal_delivery')
-          };
-        });
-      
-      if (timeFilter?.specificTime) {
-        const { day, time } = timeFilter.specificTime;
-        filteredPlaces = filteredPlaces.filter(place => {
-          const dayIndex = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-            .indexOf(day.toLowerCase());
-          
-          if (!place.opening_hours?.periods) return true;
-          
-          return place.opening_hours.periods.some(period => {
-            if (period.open?.day !== dayIndex) return false;
-            
-            const openTime = parseInt(period.open.time);
-            const closeTime = parseInt(period.close?.time || '2359');
-            const checkTime = parseInt(time.replace(':', ''));
-            
-            return checkTime >= openTime && checkTime <= closeTime;
-          });
-        });
+      if (points.length !== 2) {
+        setVenues([]);
+        setTotalResults(0);
+        return;
       }
 
-      const sortedPlaces = filteredPlaces.sort((a, b) => a.distance - b.distance);
+      const midpoint = {
+        lat: (points[0].lat + points[1].lat) / 2,
+        lng: (points[0].lng + points[1].lng) / 2
+      };
+
+      const places = await searchPlaces(midpoint, params);
+      
+      // Fetch details in batches
+      const firstPageDetails = [];
+      for (const place of places.slice(0, INITIAL_RESULTS)) {
+        try {
+          const details = await getPlaceDetails(place.place_id);
+          firstPageDetails.push(details);
+        } catch (error) {
+          console.error('Error fetching place details:', error);
+        }
+      }
+      
+      const placesWithDetails = firstPageDetails.map(place => ({
+        ...place,
+        straightLineDistance: calculateStraightLineDistance(midpoint, place.geometry.location)
+      }));
+
+      const sortedPlaces = placesWithDetails.sort((a, b) => 
+        a.straightLineDistance - b.straightLineDistance
+      );
+
+      setTotalResults(places.length);
       setVenues(sortedPlaces);
-      setRemainingSearches(getRemainingCalls());
+      setCurrentPage(1);
 
-    } catch (err) {
-      if (err.message === 'Operation timed out') {
-        setError('Request timed out. Please try again.');
-      } else if (err.message === 'FREE_LIMIT') {
-        setError('You\'ve used all free searches for today. Try again tomorrow!');
-      } else if (err.message === 'OVER_QUERY_LIMIT') {
-        setError('You\'ve used all free searches for today. Try again tomorrow!');
-      } else {
-        setError('Unable to find places. Please try again.');
-      }
-      console.error('Fetch error:', err);
+    } catch (error) {
+      setError(error);
+      setVenues([]);
+      setTotalResults(0);
     } finally {
       setIsLoading(false);
     }
-  }, [map, points, timeFilter, batchNearbySearch, batchPlaceDetails]);
+  }, [searchPlaces, getPlaceDetails]);
+
+  const loadMoreDetails = useCallback(async () => {
+    if (!venues.length || isLoading) return;
+
+    const startIndex = venues.length;
+    const endIndex = startIndex + INITIAL_RESULTS;
+    
+    if (startIndex >= totalResults) return;
+
+    setIsLoading(true);
+    try {
+      const nextPageDetails = [];
+      for (const place of venues.slice(startIndex, endIndex)) {
+        try {
+          const details = await getPlaceDetails(place.place_id);
+          nextPageDetails.push(details);
+        } catch (error) {
+          console.error('Error fetching additional place details:', error);
+        }
+      }
+      
+      setVenues(prev => [...prev, ...nextPageDetails]);
+    } catch (error) {
+      setError(error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [venues, isLoading, totalResults, getPlaceDetails]);
+
+  const getPageResults = useCallback(() => {
+    const startIndex = (currentPage - 1) * INITIAL_RESULTS;
+    const pageVenues = venues.slice(startIndex, startIndex + INITIAL_RESULTS);
+    
+    if (pageVenues.length < INITIAL_RESULTS && startIndex + pageVenues.length < totalResults) {
+      loadMoreDetails();
+    }
+    
+    return pageVenues;
+  }, [venues, currentPage, totalResults, loadMoreDetails]);
 
   useEffect(() => {
-    if (points.length === 2) {
-      fetchNearbyPlaces();
-    }
-  }, [points, bias, timeFilter, fetchNearbyPlaces]);
+    return () => {
+      abortPreviousSearch();
+    };
+  }, []);
 
   return {
-    places: venues,
+    places: getPageResults(),
+    totalResults,
+    currentPage,
+    setCurrentPage,
     isLoading,
     error,
-    remainingSearches,
-    refetch: fetchNearbyPlaces
+    remainingSearches: getRemainingCalls(),
+    fetchPlaces,
+    setActiveFilters,
+    RESULTS_PER_PAGE: INITIAL_RESULTS
   };
 };
 
